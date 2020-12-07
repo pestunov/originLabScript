@@ -1,0 +1,644 @@
+//solubilities
+//CO2sol = .312+3.002*exp((-1)*nn/26.598); // g/l
+//Ch4Sol = (0.0194+0.038*exp((-1)*nn/21.873))*16/22,4; //g/l
+
+[longNameToShortName]
+string strr$;
+	loop (ii, 1, wks.nCols){
+		wks.col = ii;
+		strr$ = wks.col.name$;
+		strr$ = col(%(strr$))[L]$;
+		if (strr$ != ""){
+			wks.col.name$ = strr$;
+		}
+	}
+	
+[longFormulae]
+	formula_str$ = "(col(V1state)==1)?1:((col(V2state)==1)?2:((col(V3state)==1)?3:((col(V4state)==1)?4:((col(V5state)==1)?5:((col(V6state)==1)?6:0)))))";
+	col(fchannel)[1]=0;
+	csetvalue formula:=formula_str$ col:=col(fchannel) recalculate:=0;
+	
+
+[middleLineBaikal]
+function double haversine(double lon1, lat1, lon2, lat2)
+{
+	double grad_to_rad = 3.141526/180;
+	lon1_r = lon1 * grad_to_rad;lon2_r = lon2 * grad_to_rad;lat1_r = lat1 * grad_to_rad;lat2_r = lat2 * grad_to_rad;
+    dlon = lon2 - lon1;dlat = lat2 - lat1;dlon_r = lon2_r - lon1_r;dlat_r = lat2_r - lat1_r;
+    a = sin(dlat_r/2)^2 + cos(lat1_r) * cos(lat2_r) * sin(dlon_r/2)^2;
+    c = 2 * asin(sqrt(a));
+    // Radius of earth in kilometers is 6371/ the distans between 
+    return 6372.795 * c;
+}
+
+	Range lol = col(LongLeft);	Range lal = col(LatLeft);	Range lor = col(LongRight);	Range lar = col(LatRight);
+	Dataset lol_ds = lol;	Dataset lal_ds = lal;	Dataset lor_ds = lor;	Dataset lar_ds = lar;
+	Range rlong_res = col(LongLeftNearest);	Range rlat_res = col(LatLeftNearest);
+
+	Dataset long_res = {0};
+	Dataset lat_res = {0};
+	double dist, min;
+	int iMin = 1, iStart = 2;
+
+//	for( int ii = 1 ; ii <= lol_ds.GetSize() ; ii++ ){
+	for( int iLeft = 2 ; iLeft <= lol_ds.GetSize() ; iLeft++ ){
+		min = 1000;
+		for( int iRght = iStart ; iRght <= lor_ds.GetSize() ; iRght++ ){
+			dist = haversine(lol_ds[iLeft], lal_ds[iLeft], lor_ds[iRght],lar_ds[iRght]);
+			if (dist < min) {min = dist; iMin = iRght;}
+			if (dist > 500) break;
+		}
+		long_res[iLeft] = (lol_ds[iLeft] + lor_ds[iMin])/2;
+		lat_res[iLeft] = (lal_ds[iLeft] + lar_ds[iMin])/2;
+		rlong_res = long_res;
+		rlat_res = lat_res;
+		iStart = iMin-100; if (iStart < 2) iStart = 2;
+	}
+
+[stope]
+	lon1_r, lat1_r, lon2_r, lat2_r = map(radians, [lon1, lat1, lon2, lat2])
+    # haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    dlon_r = lon2_r - lon1_r
+    dlat_r = lat2_r - lat1_r
+    a = sin(dlat_r/2)**2 + cos(lat1_r) * cos(lat2_r) * sin(dlon_r/2)**2
+    c = 2 * asin(sqrt(a))
+    # Radius of earth in kilometers is 6371
+    km = 6372.795 * c
+    return {'dist':km, 'p1_1km': (lat1+dlat/km*1, lon1+dlon/km*1),
+                       'p1_3km': (lat1+dlat/km*3, lon1+dlon/km*3),
+                       'p1_5km': (lat1+dlat/km*5, lon1+dlon/km*5),
+                       'p1_7km': (lat1+dlat/km*7, lon1+dlon/km*7),
+                       'mid': (lat1+dlat/2, lat1+dlat/2),
+                       'p2_1km': (lat2-dlat/km*1, lon2-dlon/km*1),
+                       'p2_3km': (lat2-dlat/km*3, lon2-dlon/km*3),
+                       'p2_5km': (lat2-dlat/km*5, lon2-dlon/km*5),
+                       'p2_7km': (lat2-dlat/km*7, lon2-dlon/km*7),
+           }
+}
+
+	
+[SolarTime]
+// Calculate solar time using local date for Bolshie Coty. Use UTC + 8 for uniform 
+	int ii;
+	double SolarTime, sunrise, sunset, daytime, night;
+	range o1DateTime = Col(UTC);
+	oDateTime = o1DateTime + 7/24;	// Highest sun at 13:00 of local time or at afternoon in Krasnoyarsk (UTC+7) 
+	range result = Col(pCO2wtrModel);
+	oDate = int(oDateTime);
+//	oDayN = Day(oDate,2);  // longer
+	range oDayN = Col(oDayN);
+	oTime = oDateTime - oDate;
+////////////////////////////////	
+/////// model parameters ///////
+////////////////////////////////
+range dailyPattern = (2!col(1), 2!col(2));
+range AnnualMeanPattern = (2!col(3), 2!col(4));
+range AnnualAmplitudePattern = (2!col(3), 2!col(5));
+double pCO2wtr = dailyPattern(0.68);
+	for (ii = 1; ii <= wks.nRows; ii++){
+//	for (ii = 1553; ii <= 1583; ii++){
+		sunrise = 0.254 + 0.09 * sin(3.141526 * (oDayN[ii] + 115.468)/194.592);
+		sunset = 0.747 + 0.091 * sin(3.141526 * (oDayN[ii] - 72.623)/192.232);
+		if ((oTime[ii] >= sunrise) && (oTime[ii] < sunset)){
+			daytime = sunset - sunrise;
+			SolarTime =(oTime[ii] - sunrise) / (daytime)*0.5 + 6/24;
+		}
+		else {
+			night = 1 - (sunset - sunrise);
+			if (oTime[ii] < sunrise){
+				oTime[ii] += 1;
+			}
+			SolarTime =(oTime[ii] - sunset) / (night)*0.5 + 18/24;
+			if (SolarTime > 1){
+				SolarTime -= 1;
+			}
+		}
+	pCO2wtr = dailyPattern(SolarTime)*AnnualAmplitudePattern(oDayN[ii]) + AnnualMeanPattern(oDayN[ii]);
+	result[ii] = pCO2wtr;
+	
+	}
+	
+[testtt]
+{
+newsheet;
+col(1) = data(0,1,2/24);
+col(2) = {0.2, 0.316, 0.387, 0.448, 0.393, 0.098, -0.259, -0.463, -0.524, -0.411, -0.206, 0.021, 0.2}; 	// Daily pCO2wtr
+col(3) = {135, 166, 196, 227, 258, 288, 319, 349};	// Day of year of dates: may, jun... dec, 15
+col(4) = {371, 365, 362, 289, 308, 376, 420, 482};	// Mean pCO2wtr
+col(5) = {144, 328, 202, 216, 162, 217, 167, 121};	// Amplitude pCO2wtr
+//range newx = 3; // Use column as X column data
+//newx = {0, 0.1, 0.2, 0.9}; // Create our new X data
+//range newy = 4; // This is the empty column we will interpolate into
+//newy = rxy(newx);
+}
+
+	
+[tttest]
+double CH4_density = 16000/22.4;//CH4 density mg/l
+String ColGasFrom$ = "pCH4equ", ColpGasTo$ = "pCH4wtr", ColcGasTo$ = "cCH4wtr", ColTmp$ = "Twtr"; 
+int ii;
+double cCequ, pCequ, tau_air, tau_wtr, SolCH4_equ;
+
+	for (ii = 8428; ii<=wks.nRows; ii++){
+		if ((Col("pCH4equ")[ii] && Col("pCH4equ")[ii-1] && Col("TequBot")[ii]) !=0 ) {
+			dTime = (Col(DateTime)[ii]-Col(DateTime)[ii-1])*24*60*60;	//dTime, sec
+			Twtr = Col("TequBot")[ii];
+
+			Vequa = 25;					//Equivalent equilibrator volume, l 
+			Uair = 3/60;
+			Uwtr = 8/60;
+			Tequw = Twtr;										//Col(Tequw)[ii];
+			pCequ = Col("pCH4equ")[ii];
+			pCequ_prev = Col("pCH4equ")[ii-1];
+			cCequ = pCequ/1000000*CH4_density;					//uatm --> mgCH4/l of equ air 
+			cCequ_prev = pCequ_prev/1000000*CH4_density;		//uatm --> mgCH4/l of equ air 
+				
+			SolCH4_river = 0.018+0.038*exp((-1)*Twtr/21.627);			//CH4 Solubility in water l/l
+			SolCH4_equ = 0.018+0.038*exp((-1)*Tequw/21.627);			//CH4 Solubility in water l/l
+			tau_air = Vequa/(Uair+Uwtr*SolCH4_equ);						//Air+water inlet time constant, sec
+			tau_wtr = Vequa/(Uwtr*SolCH4_equ);							//Water inlet time constant, sec
+		
+			pCair = 1.845;
+			cCair = pCair/1000000*CH4_density;
+
+			Ampl = cCequ_prev - cCequ;
+			Ampl = Ampl/(1-exp(-dTime/tau_air));
+			cCequ = cCequ - Ampl;
+			pCequ = cCequ/CH4_density*1000/SolCH4_equ; 
+
+			pCwtrre = (cCequ/CH4_density*1000000 * (Uair + Uwtr*SolCH4_equ)-pCair*Uair)/(Uwtr*SolCH4_equ);
+			cCwtrre = pCwtrre*CH4_density/1000*SolCH4_equ;
+			pCwtrre = cCwtrre/CH4_density*1000/SolCH4_river;
+			Col(%(ColcGasTo$))[ii] = cCwtrre;
+			Col(%(ColpGasTo$))[ii] = pCwtrre;
+		} //if (Col(pCH4equ)[ii] && Col(pCH4equ)[ii-1] && Col(Twtr)[ii]) !=0)
+	} //for (ii = 2; ii<=wks.nRows; ii++)
+
+[indexx]
+	wsort bycol:=1;
+	int kk;
+	int lastRow = 1;
+	tempDate = col(DateTime)[67]+1/235;
+	loop (kk, lastRow, wks.nRows){
+		if (col(DateTime)[kk] >= tempDate) break;
+	}
+	int resultt=ii;
+	
+[arraytest]
+	int ii = 1;
+	dataset ds;
+	ds[ii] = 15.345;
+	ds[2] = 16;
+	ds[3] = 14.345;
+	ds[5] = 21.376;
+	stats ds;
+	double ll = stats.mean;
+	double kk = StdDev(ds);
+	int jj;
+	
+
+	
+	
+	
+[hourly]
+/*
+Feb 1, 2017. Wed
+Section script is intended to fill "hourly" worksheet
+with data averaged (+std) by PERIOD
+selected columns used for "hourly" procedures may be spread over whole worksheet 
+Jan 15, 2018 upgrade "row insert into final table" procedure
+Mar 20, 2020 added STD
+*/
+	int period = 60;			//hourization period in minutes
+	double deltaTime = 1/1440;	//about 1 minute = 6.9e-4
+	string booksheet1$ = %E;	//store a current book and sheet position
+	string book1$ = %H;			//store a current book position
+	int rbot = wks.nRows;		//rows number in source worksheet
+	int ii, jj=1;
+	stringarray SelColNames;	// store all column's names which are selected in srting array
+	stringarray SelColLongNames;	// store all column's names which are selected in srting array
+	stringarray SelColUnits;	// store all column's names which are selected in srting array
+	string strr$;
+	dataset ds;
+// selected 
+	loop (ii, 1, wks.nCols){
+		if (wks.isColSel(ii)) {
+			wks.col = ii;
+			strr$ = wks.col.name$;
+			SelColNames.Add(strr$);
+			SelColLongNames.Add(col(%(strr$))[L]$);
+			SelColUnits.Add(col(%(strr$))[U]$);
+		}
+	}
+	
+	wo -s 1 0;		//sort origin worksheet by col(DateTime) accending
+	domenu 36464;	//Menu (id=36442 do delete selected)
+
+
+//	wks.col = 1;	// delete all rows where datetime cells are empty
+//	wdelrows method:=1 start:=1 end:=wks.nRows r:=col(1);		
+
+	newbook name:="hourly" sheet:=1 hidden:=0 option:= lsname chkname:= 1;
+	win -a hourly;
+	wks.col1.format=4; wks.col1.subformat=11; wks.col1.width= 13; wks.col1.name$= "DateTime"; col(1)[L]$=DateTime;
+//	String formula_str$ = "(int((Col(DateTime)-2097152)*2880))/2880+2097152";
+//	csetvalue formula:=formula_str$ col:=col(DateTime) recalculate:=0;
+	wo -s 1 0;		//sort origin worksheet by col(DateTime) accending
+	domenu 36464;	//Menu (id=36442 do delete selected)
+	
+	range oDate = %(booksheet1$)!col(DateTime);
+
+	loop(ii,1,SelColNames.GetSize()){				// check the column existance in target table...
+		strr$ = SelColNames.GetAt(ii)$;
+		if (colnum(%(strr$))==0) {
+			wks.AddCol(%(strr$));					// ... and create new one if it's absent
+			col(%(strr$))[L]$ = SelColLongNames.GetAt(ii)$;
+			col(%(strr$))[U]$ = SelColUnits.GetAt(ii)$;
+		}
+
+//*******************************
+//***** calc average for period -* date 00:00 to date HH+period *- *****
+		int rtop = 1;				// row to start calc
+		int rCur = 1;	int kk;		// row and index for index search
+
+// search for first data in origin table
+		for (jj = 1; jj<=rBot; jj++) {if ((oDate[jj])!=0/0) break;}
+		rtop = jj;
+		
+// searching for first filled rows removing all unfilled		
+		for (jj = 1; jj<=wks.nRows; jj++) {
+			if ((Col(DateTime)[1])!=0/0) break;
+			wo -s 0 1;
+			domenu 36442;
+		}
+		rCur = 1;
+		
+		
+		double one_step = 1440/period;
+		double dateTemp00Calc = int(oDate[rtop]*one_step)/one_step;	// hh:mm time
+		double dateTempStopCalc = dateTemp00Calc+period/2880;		// hh:mm time + 0,5 period 
+		double oAver = 0; double oCount = 0, ttemp = 0; int rCount = 1;
+		double oMean, oStd;
+		ds = 0/0; int dsIndex=1;
+		range oData = %(booksheet1$)!col(%(strr$));
+		for (jj = rtop; jj<=rbot; jj++){
+			ttemp = oDate[jj];
+			if ((ttemp > dateTempStopCalc)||(jj == rbot)){
+				if (oCount != 0) {
+					//oAver = oAver/oCount;
+					stats ds;
+					oMean = stats.mean;
+					oStd = stats.sd;
+					// find apropriate row to insert dated value
+					loop (kk, rCur, wks.nRows){			//loop(var, start, stop)
+						if (((dateTemp00Calc+deltaTime)>=col(DateTime)[kk])&&((dateTemp00Calc-deltaTime)<=col(DateTime)[kk])){
+							rCur=kk;
+							break;
+						}
+						if ((dateTemp00Calc+deltaTime)<(col(DateTime)[kk]) || (col(DateTime)[kk]==0/0)){						
+							rCur=kk;
+							wo -s 0 rCur;
+							domenu 36441;	// insert row. The only way to do that
+							col(DateTime)[rCur] = dateTemp00Calc;
+							break;
+						}
+					}//loop *** find apropriate row to insert dated value
+
+					//col(%(strr$))[rCur] = oAver;
+					col(%(strr$))[rCur] = oMean;
+					col(%(strr$)Er)[rCur] = oStd;
+				} 
+
+				ttemp = oDate[jj]+period/2880;
+				dateTemp00Calc = int(ttemp*one_step)/one_step;// hh:mm time
+				dateTempStopCalc = dateTemp00Calc+period/2880;		// hh:mm time + 0,5 period 
+				oAver = 0; oCount = 0; rCount++;
+				ds = 0/0; ds.SetSize(0); dsIndex = 1;
+			} //if
+			if (oData[jj] != --) {
+//				ttemp = 1-24*(abs(dateTemp00Calc-oDate[jj]));
+				ttemp = 1;
+				oCount +=ttemp; 
+//				oAver += oData[jj]*ttemp;
+				ds[dsIndex] = oData[jj];
+				dsIndex += 1; 
+			} //if
+		}	// for
+	} //loop
+
+	%a = book1$; win -a %a;							// go to back to sheet where script was run
+
+	
+	
+[hourlyDaily]
+/*
+used to calculate mean() and std() for each hour of the days () applying to selected columns
+data should be sorted by time of day. statistics are computed for each hour following schema:
+	00 23:30 - 00:30
+	01 00:30 - 01:30
+	02 01:30 - 02:30
+	.
+	.
+	.
+	23 22:30 - 23:30
+"Hourly" section used as pattern for this procedure
+
+*/
+	string booksheet1$ = %E;	//store a current book and sheet position
+	string book1$ = %H;			//store a current book position
+	int rbot = wks.nRows;		//rows number in source worksheet
+	int ii, jj=1;
+	stringarray SelColNames;	// store all column's names which are selected in srting array
+	stringarray SelColLongNames;	// store all column's names which are selected in srting array
+	stringarray SelColUnits;	// store all column's names which are selected in srting array
+	string strr$, strrEr$;
+	dataset ds;
+// selected 
+	loop (ii, 1, wks.nCols){
+		if (wks.isColSel(ii)) {
+			wks.col = ii;
+			strr$ = wks.col.name$;
+			SelColNames.Add(strr$);
+			SelColLongNames.Add(col(%(strr$))[L]$);
+			SelColUnits.Add(col(%(strr$))[U]$);
+		}
+	}
+/*
+	String formula_str$ = "Col(DateTime)-int(Col(DateTime));";
+	String colDtime$ = "Time";col(%(colDtime$))[1]=0; col(%(colDtime$))[nRows]=0; col(%(colDtime$))[L]$ = colDtime$;
+	csetvalue formula:=formula_str$ col:=col(%(colDtime$)) recalculate:=0;
+*/
+//	wks.col = 1;	// delete all rows where datetime cells are empty
+//	wdelrows method:=1 start:=1 end:=wks.nRows r:=col(1);		
+
+	newbook name:="Daily" sheet:=1 hidden:=0 option:= lsname chkname:= 1;
+	win -a daily;
+	wks.col1.format=1; wks.col1.width= 6; wks.col1.name$= "Time"; col(1)[L]$="Time"; col(1)[U]$="Hour"; 
+	wks.col1.type=4;
+	loop(hh, 1, 25){col(Time)[hh] = hh-1;}
+	range oTime = %(booksheet1$)!col(Time);
+	
+	loop(ii,1,SelColNames.GetSize()){				// check the column existance in target table...
+		strr$ = SelColNames.GetAt(ii)$;
+		strrEr$ = %(strr$)Er;
+		if (colnum(%(strr$))==0) {
+			wks.AddCol(%(strr$));					// ... and create new one if it's absent
+			col(%(strr$))[L]$ = SelColLongNames.GetAt(ii)$;
+			col(%(strr$))[U]$ = SelColUnits.GetAt(ii)$;
+			wks.AddCol(%(strrEr$));					// ... and create new one if it's absent
+			range cc = col(%(strrEr$));
+			cc.type=3;
+		}
+		
+		range oData = %(booksheet1$)!col(%(strr$));		
+		dataset ddd = {0.5:1:26};	// must stop after 23
+		
+//*******************************
+//***** calc average for period -* date 00:00 to date HH+period *- *****
+		double t;
+		dataset ds1, ds0; int ds1i = 1, ds0i = 1, hourN = 2;
+		int oSize = oTime.GetSize(), di;
+		loop(di,1,oSize){
+			t = oTime[di]*24;
+			if ((t<=ddd[1])||(t>ddd[24])){
+				ds0[ds0i] = oData[di]; ds0i += 1;
+				continue;
+			} // if 
+			if (t<=ddd[hourN]){
+				ds1[ds1i] = oData[di]; ds1i += 1;
+			} // if 
+			if ((di == oSize)||(oTime[di+1]*24>ddd[hourN])){
+				stats ds1;
+				col(%(strr$))[hourN] = stats.mean;
+				col(%(strrEr$))[hourN] = stats.sd;
+				ds1.SetSize(0); ds1i = 1; hourN += 1;
+			}
+						
+		}	//loop whole origin dbase 
+		stats ds0;
+		col(%(strr$))[1] = stats.mean;
+		col(%(strrEr$))[1] = stats.sd;
+		col(%(strr$))[25] = stats.mean;
+		col(%(strrEr$))[25] = stats.sd;
+		
+	} //loop
+
+	%a = book1$; win -a %a;							// go to back to sheet where script was run
+
+[funcs]
+	dataset ddd = {0:1:23};
+	dataset eee = {0.5:1:33.5};
+	dataset fff = ddd+eee;
+	type(fff);
+	ii = fff[4];
+	ii+=1;
+	
+
+	
+	function dataset getDatasetForHour(dataset ds, int hour){
+		for(int ii = 2 ; ii <= ds.GetSize() ; ii++){
+			continue;		
+		}
+	}
+
+
+//*****************************
+//*******    METERLY    *******
+//*****************************
+[meterly]
+	int Step = 2000;			// Step Distance in meter
+	int Earth_rad=6371;
+	double Earth_dist_equator=Earth_rad*2*3.141526/360;
+	double DistX, DistY, Dist;
+	string booksheet1$ = %E;	//store a current book and sheet position
+	string book1$ = %H;			//store a current book position
+	int rbot = wks.nRows;		//rows number in source worksheet
+	int ii, jj=1, tt, mm, hh, bigloop, is_start = 1;
+	stringarray SelColNames;	// store all column's names which are selected in srting array
+	stringarray SelColLongNames;	// store all column's names which are selected in srting array
+	stringarray SelColUnits;	// store all column's names which are selected in srting array
+	string strr$;
+	loop (ii, 1, wks.nCols){
+		if (wks.isColSel(ii)) {
+			wks.col = ii;
+			strr$ = wks.col.name$;
+			SelColNames.Add(strr$);
+			SelColLongNames.Add(col(%(strr$))[L]$);
+			SelColUnits.Add(col(%(strr$))[U]$);
+		}
+	}
+	wo -s 1 0;		//sort origin worksheet by col(DateTime) accending
+	domenu 36464;	//Menu (id=36442 do delete selected)
+/*
+	newbook name:="meterly" sheet:=1 option:= lsname chkname:= 1;
+	win -a meterly;
+	wks.ncols = 4;
+	wks.col1.format=4; wks.col1.subformat=11; wks.col1.width= 13; wks.col1.name$= "DateTime"; col(1)[L]$=DateTime;
+	wks.col2.format=1; wks.col2.width= 7; wks.col2.name$= "Longitude"; col(2)[L]$="Longitude";
+	wks.col3.format=1; wks.col3.width= 7; wks.col3.name$= "Latitude"; col(3)[L]$="Latitude";
+*/
+	strr$ = SelColNames.GetAt(1)$;
+	string strr_new$ = %(strr$)New;
+	if (colnum(%(strr_new$))==0) {
+			wks.AddCol(%(strr_new$));					// ... and create new one if it's absent
+			col(%(strr_new$))[L]$ = %(strr_new$);
+			col(%(strr_new$))[U]$ = SelColUnits.GetAt(1)$;
+		}
+
+	range rLong = %(booksheet1$)!col(Longitude);
+	range rLat = %(booksheet1$)!col(Latitude);
+	range oDate = %(booksheet1$)!col(DateTime);
+	range oData = %(booksheet1$)!col(%(strr$));
+	double sum = 0; int nnn = 0;
+	for (ii = 2; ii<=rbot; ii++){
+		if ((rLong[ii] != --)&&(rLat[ii] != --)){
+			if (is_start == 1) {jj=ii-1; is_start = 0;}
+			DistX=(rLong[ii]-rLong[jj])*Earth_dist_equator*cos(rLat[ii]*0.01745329);	
+			DistY=(rLat[ii]-rLat[jj])*Earth_dist_equator;
+			Dist=sqrt(DistX^2+DistY^2);
+			if (oData[ii] != 0/0) {sum = sum + oData[ii]; nnn++;}
+			if (Dist >= (Step/1000)){
+				is_start = 1;
+				if (nnn > 0) {
+					col(%(strr_new$))[jj] = sum/nnn;
+					sum = 0; nnn = 0;
+				}
+			}
+		}
+	}
+[stop]
+
+	/////////////////// Big Loop /////////////////////
+	loop(ii,1,SelColNames.GetSize()){				// check the column existance in target table...
+		strr$ = SelColNames.GetAt(ii)$;
+		if (colnum(%(strr$))==0) {
+			wks.AddCol(%(strr$));					// ... and create new one if it's absent
+			col(%(strr$))[L]$ = SelColLongNames.GetAt(ii)$;
+			col(%(strr$))[U]$ = SelColUnits.GetAt(ii)$;
+		}
+
+		double CorXSum=0;	double CorXCount=0;	double CorYSum=0;	double CorYCount=0;
+		double CorXStart, CorYStart;
+		double TempSum=0;	double TempCount=0; double tempSD=0;
+
+		int rtop = 1;				// row to start calc
+		int rLast = 1;	int kk;		// row and index for index search
+		for (jj = rtop; jj<=rbot; jj++){
+			kk = int(oDate[jj]);
+			if (kk>200000) break;
+		}
+		rtop = jj;
+
+		int kk = 0;	int jj=1;
+		for(ii = 2; ii <= rBot; ii++){
+			if ((rLong[ii] != --)&&(rLat[ii] != --)){
+				DistX=(Col("Longitude")[ii]-Col("Longitude")[jj])*Earth_dist_equator*cos(Col("Latitude")[ii]*0.01745329);	
+				DistY=(Col("Latitude")[ii]-Col("Latitude")[jj])*Earth_dist_equator;
+				Dist=sqrt(DistX^2+DistY^2);
+			}
+
+				{CorXSum+=Col("Longitude")[ii]; CorXCount++;}  
+ 	if (Col("Latitude")[ii] != --) {CorYSum+=Col("Latitude")[ii]; CorYCount++;}  
+
+ 		if (Col(CO2air)[ii] != --) {co2airSum+=Col(CO2air)[ii]; co2airCount++;}  
+	DistX=(Col("Longitude")[ii]-Col("Longitude")[jj])*Earth_dist_equator*cos(Col("Latitude")[ii]*0.01745329);	
+ 	DistY=(Col("Latitude")[ii]-Col("Latitude")[jj])*Earth_dist_equator;
+ 	Dist=sqrt(DistX^2+DistY^2);
+ 	if (Dist >= 2) 
+	
+	
+	}
+	} // big loop
+		
+	
+	
+[hourlyDaily???]
+/*
+Feb 13, 2017. Wed
+Section script is intended to fill "hourlyDaily" worksheet
+with daily patterns 
+selected columns used for "hourly" procedures may be spread over whole worksheet 
+*/
+	
+//*******************************
+	string booksheet1$ = %E;		// store a current book and sheet position
+	string book1$ = %H;			// store a current book position
+	int rbot = wks.nRows;		// rows number in active worksheet
+	int ii, jj, kk, tt, mm, bigloop;
+	int hh; string strr$;
+//*******************************	
+	Stringarray SelColNames;				// store all column's names which are selected in srting array
+	loop (ii, 1, wks.nCols){if (wks.isColSel(ii)){wks.col = ii; SelColNames.Add(wks.col.name$);}}
+
+//*******************************
+	//if (colnum(TimeScrpt)==0) {wks.col = 2; wks.insert(TimeScrpt);}
+	//range mm = %E!col(DateTime);		range nn = %E!col(Timescrpt);	nn = mm - int(mm);
+	//if (colnum(MonthScrpt)==0) {wks.col = 3; wks.insert(MonthScrpt);}
+	//range mm = %E!col(DateTime);		range nn = %E!col(MonthScrpt);	nn = Month(mm);
+//*******************************
+	loop (bigloop, 1, SelColNames.GetSize()){
+	String BookName$ = "DailyPattern";
+	newbook name:=BookName$ hidden:=0 option:=lsname chkname:=1;
+	win -a %(BookName$);
+
+	wks.col1.format=3; wks.col1.subformat=1; wks.col1.width= 6; wks.col1.name$= "Time"; col(1)[L]$="Time";
+	for (hh = 0; hh<=23; hh++){col(1)[hh+1] = hh/24;}
+	wks.ncols = 1;
+//Column type: 1 = Y, 2 = disregard, 3 = Y Error, 4 = X, 5 = Label, 6 = Z, and 7 = X Error.
+	for (hh = 1; hh<=12; hh++){strr$ = M$(hh); wks.AddCol(%(strr$));strr$ = M$(hh)Err; wks.AddCol(%(strr$)); wks.col = 2*hh+1; wks.col.type = 3;}
+
+	Dataset ddd = {1:864};
+	for (kk=1; kk<=865; kk++){ddd[kk]=0;}
+
+	strr$ = SelColNames.GetAt(bigloop)$;
+	range oDate = %(booksheet1$)!col(DateTime);
+	range oData = %(booksheet1$)!col(%(strr$));
+//*******************************
+	int rtop = 1;				// row to start calc
+	double oTime, tData; int oMonth; int ddi, tCount;
+	// average calculate
+	for (jj = rtop; jj<=rbot; jj++){
+		if ((oDate[jj]!=--)&&(oData[jj]!=--)){
+			tData = oData[jj];
+			oTime = oDate[jj]-int(oDate[jj]); oTime=oTime*24+0.5; if (oTime>=24) {oTime = 0;} // 23.5/24
+			//oMonth = month(oDate[jj]);
+			oMonth = 3;
+			ddi=(oMonth-1)*72+int(oTime)*3+1; ddd[ddi]+=tData; /*ddd[ddi+1]+=tData*tData;*/ ddd[ddi+2]++;
+		}// if (oDate[jj]!=--)
+	}
+	for (mm=0; mm<=11; mm++){
+		for (tt=0; tt<=23; tt++){
+			ddi=mm*72+tt*3+1;
+			tData=ddd[ddi];
+			tCount=ddd[ddi+2];
+			if (tCount!=0){ ddd[ddi] = tData/tCount}
+		}				// for tt...
+	}					// for mm...
+	for (jj = rtop; jj<=rbot; jj++){
+		if ((oDate[jj]!=--)&&(oData[jj]!=--)){
+			tData = oData[jj];
+			oTime = oDate[jj]-int(oDate[jj]); oTime=oTime*24+0.5; if (oTime>=24) {oTime = 0;} // 23.5/24
+			oMonth = month(oDate[jj]);
+			ddi=(oMonth-1)*72+int(oTime)*3+1; ddd[ddi+1]=ddd[ddi+1]+(ddd[ddi]-tData)^2; /*ddd[ddi+1]+=tData*tData; ddd[ddi+2]++;*/
+		}// if (oDate[jj]!=--)
+	}
+	
+	
+	for (mm=0; mm<=11; mm++){
+		for (tt=0; tt<=23; tt++){
+			ddi=mm*72+tt*3+1;
+			tData=ddd[ddi];
+			tCount=ddd[ddi+2];
+			if (tCount!=0){
+				jj=tt+1; ii=mm+1; 
+				col(M$(ii))[jj]=tData;	
+				col(M$(ii)Err)[jj]=sqrt(ddd[ddi+1]/tCount);
+//				col(M$(ii)Err)[jj]=tCount;
+			}			//if coutn!=0
+		}				// for tt...
+	}					// for mm...
+	} // bigloop
+	%a = book1$; win -a %a;							// go to back to sheet where script has been run
+
