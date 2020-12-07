@@ -1,0 +1,3 @@
+*.*		# skip all files
+*/		# and folders
+!My*.ogs	# except my .ogs script files
